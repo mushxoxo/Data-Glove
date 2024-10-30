@@ -1,19 +1,28 @@
+#include <BleKeyboard.h>
+
 const int hallPin = 23;  // GPIO pin connected to the hall sensor
-const int ledPin = 2;    // GPIO pin connected to the LED
+BleKeyboard bleKeyboard("ESP32 Keyboard", "MyESP32", 100);  // Name and manufacturer
 
 void setup() {
-  Serial.being(9600);
+  Serial.begin(115200);
   pinMode(hallPin, INPUT);
-  pinMode(ledPin, OUTPUT);
+  bleKeyboard.begin();
 }
 
 void loop() {
   int hallValue = digitalRead(hallPin);
-  if (hallValue == HIGH) {
-    digitalWrite(ledPin, HIGH);  // Turn on LED if magnet is detected
-  } else {
-    digitalWrite(ledPin, LOW);   // Turn off LED otherwise
+  Serial.print("Hall Value: ");
+  Serial.println(hallValue);  // Print hall sensor value
+
+  if (bleKeyboard.isConnected()) {
+    // Press "a" when the hall sensor is activated (adjust as needed)
+    if (hallValue == HIGH) {
+      Serial.println("Hall sensor activated, sending 'a'");
+      bleKeyboard.press('a');
+      delay(100);
+      bleKeyboard.release('a');
+    }
   }
-  Serial.println(hallValue);
-  delay(1000);
+
+  delay(1000);  // Check sensor state every 100 ms
 }
