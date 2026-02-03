@@ -16,7 +16,7 @@ void setup() {
 }
 
 void loop() {
-  Serial.println("Hall Sensor Readings:");
+  Serial.println("Hall Sensor Readings:");x
 
   // Read and print the value of each hall sensor
   int hallValue1 = digitalRead(hallPin1);

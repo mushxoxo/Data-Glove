@@ -5,90 +5,99 @@ import csv
 import json
 import shutil
 
-port = "/dev/rfcomm0"  # 'COM7' for windows
-baudrate = 115200
+class Logger:
+    def __init__(self,
+                 temp_folder = "temp",
+                 img_folder = "img",
+                 img_path_file = "img_path.csv",
+                 label_count_file="label_count.json"
+                 ):
+        self.temp_folder = temp_folder
+        self.img_folder = img_folder
+        self.img_path_file = img_path_file
+        self.label_count_file = label_count_file
 
-esp32 = serial.Serial(port, baudrate, timeout=2)  # Use the correct port
-time.sleep(2)  # Allow time for serial connection
+    def confirm(self, temp_filename_path, filename_path):
+        """Move data from temp to permanent location"""
+        shutil.copy(temp_filename_path, filename_path)
+        shutil.copy(os.path.join(self.temp_folder, os.path.basename(self.img_path_file)), self.img_path_file)
+        shutil.copy(os.path.join(self.temp_folder, os.path.basename(self.label_count_file)), self.label_count_file)
 
+    def get_label_count_json(self):
+        """Read label count from JSON or return empty dict if unavailable"""
+        try:
+            with open(self.label_count_file, "r") as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
 
-def confirm():
-    shutil.copy(temp_filename_path, filename_path)
-    shutil.copy("temp/img_path.csv", "img_path.csv")
-    shutil.copy("temp/label_count.json", "label_count.json")
+    def store_img(self, esp32, path, read_time=1):
+        """Read MPU6050 data via serial and write to CSV"""
+        with open(path, "w", newline="") as file:
+            writer = csv.writer(file)
+            start_time = time.time()
+            while time.time() - start_time < read_time:
+                if esp32.in_waiting:
+                    line = esp32.readline().decode("utf-8").strip()
+                    data = line.split(",")
+                    if len(data) == 6:
+                        writer.writerow(map(str, data))
 
+    def update_img_path_csv(self, filename, final_path):
+        """Append new file path to img_path.csv (via temp)"""
+        shutil.copy(self.img_path_file, os.path.join(self.temp_folder, os.path.basename(self.img_path_file)))
+        with open(os.path.join(self.temp_folder, os.path.basename(self.img_path_file)), "a", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([filename, final_path])
 
-def get_label_count_json():
-    """Read label_count.json and return a dictionary"""
-    try:
-        with open("label_count.json", "r") as f:
-            label_count = json.load(f)  # Convert JSON to dictionary
-    except (FileNotFoundError, json.JSONDecodeError):
-        label_count = {}  # Initialize if not found
+    def update_label_count_json(self, label_count):
+        """Write updated label counts to temp"""
+        with open(os.path.join(self.temp_folder, os.path.basename(self.label_count_file)), "w+") as f:
+            json.dump(label_count, f, indent=4)
 
-    return label_count
-
-
-def store_img(filename, filename_path, read_time=1):  # Store in temp
-    """Store MPU6050 readings to /temp/filename
-    Parameters: filename, filename_path, read_time=1"""
-    with open(filename_path, "w", newline="") as file:
-        writer = csv.writer(file)
-        writer.writerow(["A_0", "A_1", "A_2", "G_0", "G_1", "G_2"])  # Column headers
-
-        start_time = time.time()
-        while time.time() - start_time < read_time:  # Collect data for n seconds
-            if esp32.in_waiting:
-                line = esp32.readline().decode("utf-8").strip()
-                data = line.split(",")
-                if len(data) == 6:
-                    writer.writerow(map(str, data))
-
-
-def update_img_path_csv(filename, filename_path): # Store in temp
-    shutil.copy("img_path.csv", "temp/img_path.csv")
-    with open("temp/img_path.csv", "a", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([filename, filename_path])
-
-
-
-def update_label_count_json(label_count):
-    with open("temp/label_count.json", "w+") as f:
-        json.dump(label_count, f, indent=4)
-
-def clear_temp():
-    folder = "temp"
-    shutil.rmtree(folder)  # Deletes everything inside, including subdirectories
-    os.mkdir(folder)  # Recreates the empty folder
+    def clear_temp(self):
+        """Clear temp directory contents"""
+        shutil.rmtree(self.temp_folder)
+        os.mkdir(self.temp_folder)
 
 
-cont = 1
-while cont:
+if __name__ == "__main__":
+    logger = Logger()
 
-    label_count = get_label_count_json()
-
-    label = input("Enter label: ")
-
-
-    label_count[label] = label_count.get(label, -1) + 1
-    filename = str(label) + "_" + str(label_count[label]) + ".csv"
-    filename_path = "img/" + filename
-    temp_filename_path = "temp/" + filename
-
-    store_img(filename, temp_filename_path, read_time = 2)
-    update_img_path_csv(filename, filename_path)
-    update_label_count_json(label_count)
+    # Serial port setup (for Windows use 'COM7')
+    port = "/dev/rfcomm0"
+    baudrate = 115200
+    esp32 = serial.Serial(port, baudrate, timeout=2)
+    time.sleep(2)
 
 
-    if input("Do you wanna confirm? ").lower() in {'yes', 'y', ''}:
-        confirm()
-    else:
-        print("abort")
 
-    clear_temp()  # Clear temp folder
+    cont = True
+    while cont:
+        label_count = logger.get_label_count_json()
 
-    cont = input("Do you wanna continue? (y/n): ").lower() in {'y', 'yes', ''}
+        # Ask user for label
+        label = input("Enter label: ")
+        label_count[label] = label_count.get(label, -1) + 1
 
+        filename = f"{label}_{label_count[label]}.csv"
+        final_path = os.path.join(logger.img_folder, filename)
+        temp_path = os.path.join(logger.temp_folder, filename)
 
-esp32.close()
+        # Record data
+        logger.store_img(esp32, temp_path, read_time=2)
+        logger.update_img_path_csv(filename, final_path)
+        logger.update_label_count_json(label_count)
+
+        # Confirm save or discard
+        if input("Do you wanna confirm? ").lower() in {"yes", "y", ""}:
+            logger.confirm(temp_path, final_path)
+        else:
+            print("abort")
+
+        # Clean temp directory
+        logger.clear_temp()
+
+        cont = input("Do you wanna continue? (y/n): ").lower() in {"y", "yes", ""}
+
+    esp32.close()
